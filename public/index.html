@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHOWCHAT</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:sans-serif}
+body{background:#0f0a1a;color:white;min-height:100vh}
+.header{background:linear-gradient(90deg,#6d28d9,#a855f7);padding:15px;text-align:center;font-weight:800;font-size:22px;letter-spacing:2px}
+.container{display:flex;height:calc(100vh - 60px)}
+.sidebar{width:35%;background:#1a1033;border-right:1px solid #2a1a4d;padding:15px}
+.main{flex:1;background:#150e26;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center}
+input{width:100%;padding:12px;border-radius:12px;border:1px solid #3a2a6a;background:#231741;color:white;margin-bottom:10px}
+.btn{background:linear-gradient(90deg,#7c3aed,#a855f7);border:none;padding:12px;border-radius:12px;color:white;font-weight:bold;width:100%;margin-top:5px}
+.user{padding:12px;background:#231741;border-radius:12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center}
+.call-btns button{margin-left:5px;padding:6px 10px;border-radius:20px;border:none;background:#2e1f5a;color:white}
+video{width:90%;max-width:400px;border-radius:20px;background:black;margin:10px}
+#videos{display:none;flex-direction:column;align-items:center;width:100%}
+#loginBox{width:100%;max-width:350px;padding:20px;background:#1e133b;border-radius:20px;text-align:center}
+.online-dot{width:10px;height:10px;background:#22c55e;border-radius:50%;display:inline-block}
+</style>
+</head>
+<body>
+<div class="header">CHOWCHAT ✨</div>
+<div class="container">
+<div class="sidebar">
+<h3>Online Users</h3>
+<div id="onlineList"></div>
+</div>
+<div class="main">
+<div id="loginBox">
+<h2 style="margin-bottom:15px">Masuk ke Chowchat</h2>
+<input id="nameInput" placeholder="Nama kamu...">
+<button class="btn" onclick="join()">Masuk</button>
+</div>
+<div id="videos">
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
+<div style="margin-top:10px">
+<button class="btn" style="background:#ef4444;width:auto;padding:10px 30px" onclick="endCall()">Tutup</button>
+</div>
+</div>
+<div id="status" style="margin-top:20px;color:#a78bfa"></div>
+</div>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let socket, localStream, pc, myName, targetUser;
+const servers={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+function join(){
+ myName=document.getElementById('nameInput').value.trim();
+ if(!myName) return alert('isi nama');
+ socket=io();
+ socket.emit('join',myName);
+ document.getElementById('loginBox').style.display='none';
+ document.getElementById('status').innerText='Connected as '+myName;
+ socket.on('online-list',list=>{
+   document.getElementById('onlineList').innerHTML=list.filter(n=>n!==myName).map(n=>`<div class="user"><span><span class="online-dot"></span> ${n}</span><span class="call-btns"><button onclick="makeCall('${n}',false)">📞</button><button onclick="makeCall('${n}',true)">📹</button></span></div>`).join('')||'<p style="opacity:.5">Belum ada user lain</p>';
+ });
+ socket.on('incomingCall',async data=>{
+   if(!confirm(data.from+' mau '+ (data.isVideo?'Video':'Voice') +' call, terima?')) return;
+   targetUser=data.from;
+   await startMedia(data.isVideo);
+   pc=new RTCPeerConnection(servers);
+   setupPC(data.isVideo);
+   localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+   await pc.setRemoteDescription(data.offer);
+   const ans=await pc.createAnswer();
+   await pc.setLocalDescription(ans);
+   socket.emit('answerCall',{to:data.from,answer:ans});
+   showVideos();
+ });
+ socket.on('callAnswered',async data=>{await pc.setRemoteDescription(data.answer)});
+ socket.on('ice',async c=>{if(c&&pc) await pc.addIceCandidate(c)});
+}
+async function startMedia(isVideo){
+ localStream=await navigator.mediaDevices.getUserMedia({video:isVideo,audio:true});
+ document.getElementById('localVideo').srcObject=localStream;
+}
+function setupPC(isVideo){
+ pc.onicecandidate=e=>{if(e.candidate) socket.emit('ice',{to:targetUser,candidate:e.candidate})};
+ pc.ontrack=e=>{document.getElementById('remoteVideo').srcObject=e.streams[0]};
+}
+async function makeCall(to,isVideo){
+ targetUser=to;
+ await startMedia(isVideo);
+ pc=new RTCPeerConnection(servers);
+ setupPC(isVideo);
+ localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+ const offer=await pc.createOffer();
+ await pc.setLocalDescription(offer);
+ socket.emit('callUser',{to,offer,isVideo});
+ showVideos();
+ document.getElementById('status').innerText='Calling '+to+'...';
+}
+function showVideos(){
+ document.getElementById('videos').style.display='flex';
+ document.getElementById('status').style.display='none';
+}
+function endCall(){
+ if(pc) pc.close();
+ if(localStream) localStream.getTracks().forEach(t=>t.stop());
+ document.getElementById('videos').style.display='none';
+ document.getElementById('status').style.display='block';
+ document.getElementById('status').innerText='Call ended';
+}
+</script>
+</body>
+</html>
